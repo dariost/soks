@@ -6,7 +6,7 @@ Soks doesn't implement the whole SOCKS5 protocol, it only supports the `NO AUTHE
 This is enough to make it work with browsers like Mozilla Firefox or other applications like ssh (when proxied with netcat).
 
 ```
-Usage: ./soks -i <interface>
+Usage: soks -i <interface>
 
     Soks is a minimalistic SOCKS5 proxy over a network interface (like a VPN or
     a second physical network device)
@@ -19,7 +19,7 @@ Usage: ./soks -i <interface>
     -v                be verbose (default false)
     -h, --help        print this help
 
-Usage example: ./soks -i tun0 -l 127.0.0.1 -p 1080
+Usage example: soks -i tun0 -l 127.0.0.1 -p 1080
 
 Soks was written by Dario Ostuni <dario.ostuni@gmail.com>
 The code is licensed under the MPL2 licence <http://mozilla.org/MPL/2.0/>
