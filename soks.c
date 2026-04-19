@@ -35,12 +35,13 @@ void print_usage_and_exit(FILE* f, const char* program_name, int exit_code) {
             "    -i <interface>    set the network interface name to redirect the traffic to\n"
             "    -l <address>      set the address to listen to (default 127.0.0.1)\n"
             "    -p <port>         set the port to listen to (default 1080)\n"
+            "    -c <user:pass>    set username and password for SOCKS5 authentication\n"
             "    -n <niceness>     increase niceness for the children processes (default 10)\n"
             "    -t <timeout>      set the timeout (in seconds) for connections (default 60)\n"
             "    -v                be verbose (default false)\n"
             "    -h, --help        print this help\n"
             "\n"
-            "Usage example: %s -i tun0 -l 127.0.0.1 -p 1080\n"
+            "Usage example: %s -i tun0 -l 127.0.0.1 -p 1080 -c user:pass\n"
             "\n"
             "Soks was written by Dario Ostuni <dario.ostuni@gmail.com>\n"
             "The code is licensed under the MPL2 licence <http://mozilla.org/MPL/2.0/>\n"
@@ -60,6 +61,9 @@ int main(int argc, char* argv[]) {
     int niceness_increase = 10;
     bool verbose = false;
     time_t timeout_seconds = 60;
+    const char* credentials = NULL;
+    char* expected_user = NULL;
+    char* expected_pass = NULL;
     for(size_t i = 1; i < argc; i++) {
         if(strcmp(argv[i], "-i") == 0 && i < argc - 1) {
             interface_name = argv[++i];
@@ -67,6 +71,8 @@ int main(int argc, char* argv[]) {
             listen_address = argv[++i];
         } else if(strcmp(argv[i], "-p") == 0 && i < argc - 1) {
             listen_port = atoi(argv[++i]);
+        } else if(strcmp(argv[i], "-c") == 0 && i < argc - 1) {
+            credentials = argv[++i];
         } else if(strcmp(argv[i], "-t") == 0 && i < argc - 1) {
             timeout_seconds = atoi(argv[++i]);
         } else if(strcmp(argv[i], "-n") == 0 && i < argc - 1) {
@@ -83,6 +89,21 @@ int main(int argc, char* argv[]) {
     if(!interface_name) {
         fprintf(stdout, "Mandatory argument -i missing\n\n");
         print_usage_and_exit(stdout, argv[0], EXIT_FAILURE);
+    }
+    if(credentials) {
+        char* creds_copy = strdup(credentials);
+        char* colon = strchr(creds_copy, ':');
+        if(!colon) {
+            fprintf(stdout, "Invalid credentials format, expected user:pass\n\n");
+            print_usage_and_exit(stdout, argv[0], EXIT_FAILURE);
+        }
+        *colon = '\0';
+        expected_user = creds_copy;
+        expected_pass = colon + 1;
+        if(strlen(expected_user) > 255 || strlen(expected_pass) > 255) {
+            fprintf(stdout, "Username and password must be at most 255 characters long\n\n");
+            print_usage_and_exit(stdout, argv[0], EXIT_FAILURE);
+        }
     }
     errno = 0;
     int listen_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_MPTCP);
@@ -142,15 +163,47 @@ int main(int argc, char* argv[]) {
             close(client_socket);
             exit(EXIT_FAILURE);
         }
+        uint8_t required_method = credentials ? 0x02 : 0x00;
         bool ok = false;
         for(size_t i = 0; i < buffer[1] && !ok; i++) {
-            ok = buffer[i + 2] == 0;
+            ok = buffer[i + 2] == required_method;
         }
-        uint8_t method_response[2] = {0x05, ok ? 0x00 : 0xFF};
-        ret = write(client_socket, &method_response, 2);
+        uint8_t method_response[2] = {0x05, ok ? required_method : 0xFF};
+        ret = write(client_socket, method_response, 2);
         if(ret != 2 || !ok) {
-            close(client_size);
+            close(client_socket);
             exit(EXIT_FAILURE);
+        }
+        if(credentials) {
+            ret = read(client_socket, buffer, BUFFER_SIZE);
+            if(ret < 2 || buffer[0] != 0x01) {
+                close(client_socket);
+                exit(EXIT_FAILURE);
+            }
+            uint8_t ulen = buffer[1];
+            if(ret < 2 + ulen + 1) {
+                close(client_socket);
+                exit(EXIT_FAILURE);
+            }
+            uint8_t plen = buffer[2 + ulen];
+            if(ret != 2 + ulen + 1 + plen) {
+                close(client_socket);
+                exit(EXIT_FAILURE);
+            }
+            bool user_ok = (ulen == strlen(expected_user)) && (memcmp(buffer + 2, expected_user, ulen) == 0);
+            size_t expected_pass_len = strlen(expected_pass);
+            uint8_t diff = (expected_pass_len == plen) ? 0 : 1;
+            for(size_t i = 0; i < expected_pass_len; i++) {
+                uint8_t p = (i < plen) ? buffer[2 + ulen + 1 + i] : 0;
+                diff |= (expected_pass[i] ^ p);
+            }
+            bool pass_ok = (diff == 0);
+            bool auth_ok = user_ok && pass_ok;
+            uint8_t auth_response[2] = {0x01, auth_ok ? 0x00 : 0xFF};
+            if(write(client_socket, auth_response, 2) != 2 || !auth_ok) {
+                close(client_socket);
+                exit(EXIT_FAILURE);
+            }
         }
         ret = read(client_socket, buffer, BUFFER_SIZE);
         uint8_t connect_response[10] = {0x05, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
