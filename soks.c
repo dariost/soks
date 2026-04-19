@@ -85,10 +85,13 @@ int main(int argc, char* argv[]) {
         print_usage_and_exit(stdout, argv[0], EXIT_FAILURE);
     }
     errno = 0;
-    int listen_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
+    int listen_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_MPTCP);
     if(listen_socket < 0) {
-        fprintf(stdout, "Cannot create listen socket: %s\n", strerror(errno));
-        exit(EXIT_FAILURE);
+        listen_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
+        if(listen_socket < 0) {
+            fprintf(stdout, "Cannot create listen socket: %s\n", strerror(errno));
+            exit(EXIT_FAILURE);
+        }
     }
     int yes = 1;
     setsockopt(listen_socket, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int));
@@ -190,11 +193,14 @@ int main(int argc, char* argv[]) {
             fprintf(stdout, "Client %s:%hu is trying", inet_ntoa(client_address.sin_addr), ntohs(client_address.sin_port));
             fprintf(stdout, " to connect to %s:%hu\n", inet_ntoa(remote_address.sin_addr), ntohs(remote_address.sin_port));
         }
-        int remote_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
+        int remote_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_MPTCP);
         if(remote_socket < 0) {
-            write(client_socket, connect_response, 10);
-            close(client_socket);
-            exit(EXIT_FAILURE);
+            remote_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
+            if(remote_socket < 0) {
+                write(client_socket, connect_response, 10);
+                close(client_socket);
+                exit(EXIT_FAILURE);
+            }
         }
         setsockopt(remote_socket, SOL_SOCKET, SO_BINDTODEVICE, interface_name, strlen(interface_name) + 1);
         if(connect(remote_socket, (struct sockaddr*)&remote_address, sizeof(struct sockaddr_in)) < 0) {
