@@ -122,7 +122,7 @@ int main(int argc, char* argv[]) {
     memset(&remote_address, 0, sizeof(struct sockaddr_in));
     server_address.sin_family = AF_INET;
     server_address.sin_port = htons(listen_port);
-    if(!inet_aton(listen_address, (struct in_addr*)&server_address.sin_addr.s_addr)) {
+    if(!inet_aton(listen_address, &server_address.sin_addr)) {
         fprintf(stdout, "Invalid listen address: %s\n", listen_address);
         exit(EXIT_FAILURE);
     }
